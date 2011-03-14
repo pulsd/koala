@@ -172,42 +172,42 @@ class NetHTTPServiceTests < Test::Unit::TestCase
 
           Bear.make_request('anything', args, 'post')
         end
-        
+
         describe "with multipart/form-data" do
           before(:each) do
             Bear.stub(:encode_multipart_params)
             Bear.stub("params_require_multipart?").and_return(true)
-            
+
             @multipart_request_stub = stub('Stub Multipart Request')
             Net::HTTP::Post::Multipart.stub(:new).and_return(@multipart_request_stub)
-            
+
             @file_stub = stub('fake File', "kind_of?" => true, "path" => 'anypath.jpg')
-            
+
             @http_yield_mock.stub(:request).with(@multipart_request_stub).and_return(@http_request_result)
           end
-          
+
           it "should use multipart/form-data if any parameter is a valid file hash" do
             @http_yield_mock.should_receive(:request).with(@multipart_request_stub).and_return(@http_request_result)
-            
+
             Bear.make_request('anything', {}, 'post')
           end
-          
+
           it "should use the given request path for the request" do
             args = {"file" => @file_stub}
             expected_path = 'expected/path'
-            
+
             Net::HTTP::Post::Multipart.should_receive(:new).with(expected_path, anything).and_return(@multipart_request_stub)
-            
+
             Bear.make_request(expected_path, {}, 'post')
           end
-          
+
           it "should use multipart encoded arguments for the request" do
             args = {"file" => @file_stub}
             expected_params = stub('Stub Multipart Params')
-            
+
             Bear.should_receive(:encode_multipart_params).with(args).and_return(expected_params)
             Net::HTTP::Post::Multipart.should_receive(:new).with(anything, expected_params).and_return(@multipart_request_stub)
-            
+
             Bear.make_request('anything', args, 'post')
           end
         end
@@ -299,132 +299,41 @@ class NetHTTPServiceTests < Test::Unit::TestCase
         end
       end
     end
-    
+
     describe "when detecting if multipart posting is needed" do
       it "should be true if any parameter value requires multipart post" do
-        valid_file_hash = stub("Stub Valid File Hash")
-        
-        Bear.stub!("is_valid_file_hash?").and_return(false)
-        Bear.stub!("is_valid_file_hash?").with(valid_file_hash).and_return(true)
-        
+        koala_io = mock("Koala::IO")
+        koala_io.should_receive(:kind_of?).with(Koala::UploadableIO).and_return(true)
+
         args = {
           "key1" => "val",
           "key2" => "val",
-          "key3" => valid_file_hash,
+          "key3" => koala_io,
           "key4" => "val"
         }
-        
+
         Bear.params_require_multipart?(args).should be_true
       end
       
-      describe "and looking at individual values" do
-        before(:each) do          
-          @valid_hash = {
-            "content_type" => 1,
-            "path" => 1
+      describe "when encoding multipart/form-data params" do
+        it "should replace Koala::UploadableIO values with UploadIO values" do
+          upload_io = UploadIO.new(__FILE__, "fake type")
+          
+          uploadable_io = stub('Koala::UploadableIO')
+          uploadable_io.should_receive(:kind_of?).with(Koala::UploadableIO).and_return(true)
+          uploadable_io.should_receive(:to_upload_io).and_return(upload_io)
+          args = {
+            "not_a_file" => "not a file",
+            "file" => uploadable_io
           }
-        end
-        
-        it "should only accept hashes" do
-          Bear.is_valid_file_hash?(@valid_hash).should be_true
           
-          @valid_hash.stub!("kind_of?").with(Hash).and_return(false)
-          Bear.is_valid_file_hash?(@valid_hash).should be_false
-        end
-        
-        it "should always require a content_type key" do
-          @valid_hash.delete("content_type")
-          Bear.is_valid_file_hash?(@valid_hash).should be_false
-        end
-        
-        it "should always require the path key" do
-          @valid_hash.delete("path")
-          Bear.is_valid_file_hash?(@valid_hash).should be_false
-        end
-        
-        describe "with file IOs" do
-          before :each do
-            @stub_file = stub('Stub IO File')
-            @valid_hash["file"] = @stub_file
-          end
-          
-          it "should accept hashes with the file object that responds to read" do
-            @stub_file.should_receive("respond_to?").with(:read).and_return(true)
-          
-            @valid_hash["file"] = @stub_file
-            Bear.is_valid_file_hash?(@valid_hash).should be_true
-          end
-          
-          it "should not accept hashes with a file object that does not respond to read" do
-            @stub_file.should_receive("respond_to?").with(:read).and_return(false)
-          
-            @valid_hash["file"] = @stub_file
-            Bear.is_valid_file_hash?(@valid_hash).should be_false
-          end
-          
+          result = Bear.encode_multipart_params(args)
+
+          result["not_a_file"] == args["not_a_file"]
+          result["file"] == upload_io
         end
       end
-    end
-    
-    describe "when encoding multipart/form-data params" do
-      it "should replace valid file hashes with file objects with UploadIO objects" do
-        file_hash_stub = {
-          "path" => "Fake File Name",
-          "content_type" => "Fake Content Type"
-        }
-        
-        # UploadIO should be created
-        uploadio_stub = stub("UploadIO Shell Stub")
-        UploadIO.should_receive("new").with(file_hash_stub["path"], file_hash_stub["content_type"]).and_return(uploadio_stub)
-
-        # Ruby 1.9 test compatibility
-        content_stub = "UploadIOContent Stub"
-        uploadio_stub.stub(:to_ary).and_return([content_stub])
-        
-        args = {
-          "not_a_file" => "not a file",
-          "file" => file_hash_stub
-        }
-        
-        # Check that is_valid_file_hash is called on the file_hash_stub
-        Bear.stub!("is_valid_file_hash?").and_return(false)
-        Bear.should_receive("is_valid_file_hash?").with(file_hash_stub).and_return(true)
-        
-        result = Bear.encode_multipart_params(args)
-        
-        result["not_a_file"] == args["not_a_file"]
-        result["file"] == content_stub
-      end
-
-      it "should replace valid file hashes with file objects with UploadIO objects" do
-        file_hash_stub = {
-          "file" => "Fake File IO",
-          "path" => "Fake File Name",
-          "content_type" => "Fake Content Type"
-        }
-        
-        # UploadIO should be created
-        uploadio_stub = stub("UploadIO Shell Stub")
-        UploadIO.should_receive("new").with(file_hash_stub["file"], file_hash_stub["content_type"], file_hash_stub["path"]).and_return(uploadio_stub)
-
-        # Ruby 1.9 test compatibility
-        content_stub = "UploadIOContent Stub"
-        uploadio_stub.stub(:to_ary).and_return([content_stub])
-        
-        args = {
-          "not_a_file" => "not a file",
-          "file" => file_hash_stub
-        }
-        
-        # Check that is_valid_file_hash is called on the file_hash_stub
-        Bear.stub!("is_valid_file_hash?").and_return(false)
-        Bear.should_receive("is_valid_file_hash?").with(file_hash_stub).and_return(true)
-        
-        result = Bear.encode_multipart_params(args)
-        
-        result["not_a_file"] == args["not_a_file"]
-        result["file"] == content_stub
-      end
+      
     end
   end
 end

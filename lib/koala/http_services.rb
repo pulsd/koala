@@ -15,26 +15,19 @@ module Koala
         class << self
           attr_accessor :always_use_ssl
         end
-        
-        protected
-        def self.params_require_multipart?(param_hash)
-          param_hash.any? { |key, value| is_valid_file_hash?(value) }
+               
+        def self.server(options = {})
+          "#{options[:beta] ? "beta." : ""}#{options[:rest_api] ? Facebook::REST_SERVER : Facebook::GRAPH_SERVER}"          
         end
+                                      
+        protected
         
-        # A file hash can take two forms:
-        # - A hash with "content_type" and "path" keys where "path" is the local path
-        #   to the file to be uploaded.
-        # - A hash with the "file" key containing an already-opened IO that responds to "read"
-        #   as well as "content_type" and the "path" key to the original file
-        #   ("path"" is required by multipart-post even for opened files)
-        #
-        # Valid inputs for a file to be posted via multipart/form-data
-        # are based on the criteria for an UploadIO to be created 
-        # See : https://github.com/nicksieger/multipart-post/blob/master/lib/composite_io.rb       
-        def self.is_valid_file_hash?(value)
-          value.kind_of?(Hash) and value.key?("content_type") and value.key?("path") and (
-            !value.key?("file") or value["file"].respond_to?(:read)
-          )
+        def self.params_require_multipart?(param_hash)
+          param_hash.any? { |key, value| value.kind_of?(Koala::UploadableIO) }
+        end
+    
+        def self.multipart_requires_content_type?
+          true
         end
       end
     end
@@ -61,8 +54,7 @@ module Koala
           # if the verb isn't get or post, send it as a post argument
           args.merge!({:method => verb}) && verb = "post" if verb != "get" && verb != "post"
 
-          server = options[:rest_api] ? Facebook::REST_SERVER : Facebook::GRAPH_SERVER
-          http = Net::HTTP.new(server, private_request ? 443 : nil)
+          http = Net::HTTP.new(server(options), private_request ? 443 : nil)
           http.use_ssl = true if private_request
 
           # we turn off certificate validation to avoid the
@@ -98,15 +90,7 @@ module Koala
         
         def self.encode_multipart_params(param_hash)
           Hash[*param_hash.collect do |key, value| 
-            if is_valid_file_hash?(value)
-              if value.key?("file")
-                value = UploadIO.new(value["file"], value["content_type"], value["path"])
-              else
-                value = UploadIO.new(value["path"], value['content_type'])
-              end
-            end
-            
-            [key, value]
+            [key, value.kind_of?(Koala::UploadableIO) ? value.to_upload_io : value]
           end.flatten]
         end
       end
@@ -132,7 +116,9 @@ module Koala
           unless params_require_multipart?(args)
             # if the verb isn't get or post, send it as a post argument
             args.merge!({:method => verb}) && verb = "post" if verb != "get" && verb != "post"
-            server = options[:rest_api] ? Facebook::REST_SERVER : Facebook::GRAPH_SERVER
+
+            # switch any UploadableIOs to the files Typhoeus expects 
+            # args.each_pair {|key, value| args[key] = value.to_file if value.is_a?(UploadableIO)}
 
             # you can pass arguments directly to Typhoeus using the :typhoeus_options key
             typhoeus_options = {:params => args}.merge(options[:typhoeus_options] || {})
@@ -141,7 +127,7 @@ module Koala
             # this makes public requests faster
             prefix = (args["access_token"] || @always_use_ssl || options[:use_ssl]) ? "https" : "http"
 
-            response = self.send(verb, "#{prefix}://#{server}#{path}", typhoeus_options)
+            response = self.send(verb, "#{prefix}://#{server(options)}#{path}", typhoeus_options)
             Koala::Response.new(response.code, response.body, response.headers_hash)
           else
             # we have to use NetHTTPService for multipart for file uploads
@@ -149,6 +135,12 @@ module Koala
             Koala::TyphoeusService::NetHTTPInterface.make_request(path, args, verb, options)
           end
         end
+        
+        private
+        # Typhoeus file uploads are not currently supported; this will be added when we can get them working
+        #def self.multipart_requires_content_type?
+        #  false # Typhoeus handles multipart file types, we don't have to require it
+        #end
       end # class_eval
     end
   end

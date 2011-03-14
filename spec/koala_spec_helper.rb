@@ -44,10 +44,14 @@ require 'koala/realtime_updates/realtime_updates_tests'
 # Test users tests
 require 'koala/test_users/test_users_tests'
 
+# KoalaIO tests
+require 'koala/uploadable_io/uploadable_io_tests'
+
 # Services tests
-require 'koala/net_http_service_tests'
+require 'koala/http_services/http_service_tests'
+require 'koala/http_services/net_http_service_tests'
 begin
-  require 'koala/typhoeus_service_tests'
+  require 'koala/http_services/typhoeus_service_tests'
 rescue LoadError
   puts "Typhoeus tests will not be run because Typhoeus is not installed."
 end
